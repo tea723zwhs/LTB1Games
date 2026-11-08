@@ -361,7 +361,8 @@
     .note-card{
       grid-template-columns:calc(var(--u)*4.95) 1fr;gap:calc(var(--u)*.55);
       padding:calc(var(--u)*.3) calc(var(--u)*.72) calc(var(--u)*.3) calc(var(--u)*3.25);
-      border-width:calc(var(--u)*.2);box-shadow:inset calc(var(--u)*-.28) calc(var(--u)*-.28) #c6ae7b,inset calc(var(--u)*.22) calc(var(--u)*.22) #fff2cf,calc(var(--u)*.28) calc(var(--u)*.28) #05070d
+      border-width:calc(var(--u)*.2);box-shadow:inset calc(var(--u)*-.28) calc(var(--u)*-.28) #c6ae7b,inset calc(var(--u)*.22) calc(var(--u)*.22) #fff2cf,calc(var(--u)*.28) calc(var(--u)*.28) #05070d;
+      overflow:hidden
     }
     .note-card::before{
       left:calc(var(--u)*.48);width:calc(var(--u)*2.35);height:calc(var(--u)*2.35);
@@ -373,7 +374,35 @@
     }
     .note-avatar img{width:100%;height:100%;display:block;object-fit:cover;object-position:center 12%}
     .note-avatar::before,.note-avatar::after{display:none}
-    .note-text{font-size:clamp(13px,calc(var(--u)*2.15),37px);line-height:1.1;overflow:visible}
+    .note-text{
+      min-width:0;max-height:100%;font-size:clamp(13px,calc(var(--u)*2.15),37px);line-height:1.1;
+      overflow:hidden;overflow-wrap:break-word
+    }
+
+    /* v5: iOS-safe editor-note sizing. These container rules are a CSS
+       fallback, so all five notes remain readable even before Safari finishes
+       a resize/fullscreen layout pass or if script-based fitting is delayed. */
+    @container (max-width:560px){
+      .note-text{
+        font-size:8px!important;line-height:1.04!important;
+        white-space:normal!important;overflow:hidden!important
+      }
+      .note-card{overflow:hidden!important}
+    }
+    @container (min-width:561px) and (max-height:520px){
+      .note-text{
+        font-size:11px!important;line-height:1.04!important;
+        white-space:normal!important;overflow:hidden!important
+      }
+      .note-card{overflow:hidden!important}
+    }
+    @container (min-width:561px) and (min-height:521px) and (max-height:760px){
+      .note-text{
+        font-size:13px!important;line-height:1.06!important;
+        white-space:normal!important;overflow:hidden!important
+      }
+      .note-card{overflow:hidden!important}
+    }
 
     .question-view{padding:calc(var(--u)*1.05)}
     .question-panel{width:97%;height:96%;padding:calc(var(--u)*.95);border-width:calc(var(--u)*.32);outline-width:calc(var(--u)*.18)}
@@ -422,7 +451,7 @@
     @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
   </style>
 </head>
-<body>
+<body data-build="mobile-fit-v5">
   <div class="app">
     <div class="game" id="game">
       <header class="hud" id="hud">
@@ -694,6 +723,41 @@
         })));
       }
 
+      let noteFitFrame=0;
+      function scheduleFitNotes(){
+        cancelAnimationFrame(noteFitFrame);
+        noteFitFrame=requestAnimationFrame(()=>requestAnimationFrame(fitEditorNotes));
+      }
+      function settleFitNotes(){
+        scheduleFitNotes();
+        setTimeout(scheduleFitNotes,90);
+        setTimeout(scheduleFitNotes,320);
+        setTimeout(scheduleFitNotes,700);
+      }
+      function fitEditorNotes(){
+        const cards=[...document.querySelectorAll('#sortList .note-card')];
+        if(!cards.length||!$('sortView').classList.contains('active'))return;
+        const texts=cards.map(card=>card.querySelector('.note-text'));
+        texts.forEach(text=>text.style.fontSize='');
+        const natural=Math.min(...texts.map(text=>parseFloat(getComputedStyle(text).fontSize)||13));
+        let low=6,high=natural;
+        const fits=size=>{
+          texts.forEach(text=>text.style.fontSize=`${size}px`);
+          return cards.every((card,index)=>{
+            const style=getComputedStyle(card);
+            const available=card.clientHeight-parseFloat(style.paddingTop)-parseFloat(style.paddingBottom)-parseFloat(style.borderTopWidth)-parseFloat(style.borderBottomWidth);
+            const text=texts[index];
+            return text.scrollHeight<=available+.5&&text.scrollWidth<=text.clientWidth+.5;
+          });
+        };
+        for(let i=0;i<10;i++){
+          const mid=(low+high)/2;
+          if(fits(mid))low=mid;else high=mid;
+        }
+        const finalSize=Math.max(6,Math.floor(low*10)/10);
+        texts.forEach(text=>text.style.fontSize=`${finalSize}px`);
+      }
+
       function startSort(isRetry){
         showView('sortView');selectedNote=null;
         currentOrder=shuffle(correctOrder);
@@ -715,6 +779,7 @@
           el.addEventListener('dragover',e=>{e.preventDefault();if(!dragNote||dragNote===id)return;const from=currentOrder.indexOf(dragNote),to=currentOrder.indexOf(id);currentOrder.splice(from,1);currentOrder.splice(to,0,dragNote);renderSort()});
           list.appendChild(el);
         });
+        settleFitNotes();
       }
       function selectNote(id){
         unlockAudio();sfx('click');
@@ -819,11 +884,12 @@
           document.body.classList.remove('focus-mode');fullscreenBtn.textContent='⛶';
           try{if(screen.orientation&&screen.orientation.unlock)screen.orientation.unlock()}catch(_){ }
           try{const exit=document.exitFullscreen||document.webkitExitFullscreen;if(exit&&(document.fullscreenElement||document.webkitFullscreenElement))await exit.call(document)}catch(_){ }
-          nativeFullscreen=false;return;
+          nativeFullscreen=false;settleFitNotes();return;
         }
         document.body.classList.add('focus-mode');fullscreenBtn.textContent='×';
         try{const root=document.documentElement,req=root.requestFullscreen||root.webkitRequestFullscreen;if(req){await req.call(root,{navigationUI:'hide'});nativeFullscreen=true}}catch(_){ }
         try{if(screen.orientation&&screen.orientation.lock&&matchMedia('(orientation:portrait)').matches)await screen.orientation.lock('landscape')}catch(_){ }
+        settleFitNotes();
       }
       function resetGame(){
         clearInterval(typingTimer);modalOverlay.classList.remove('show');stampOverlay.classList.remove('show');cardRain.classList.remove('go');setStamps([]);showView('startView');
@@ -833,8 +899,16 @@
       $('sortSubmit').addEventListener('click',checkSort);$('answerSubmit').addEventListener('click',submitAnswer);$('matchSubmit').addEventListener('click',checkMatches);
       $('soundBtn').addEventListener('click',()=>{unlockAudio();audioOn=!audioOn;$('soundBtn').textContent=audioOn?'♪':'×';if(audioOn)sfx('click')});
       fullscreenBtn.addEventListener('click',toggleFullscreen);$('resetBtn').addEventListener('click',()=>{unlockAudio();sfx('error');resetGame()});
-      document.addEventListener('fullscreenchange',()=>{if(!document.fullscreenElement&&nativeFullscreen){nativeFullscreen=false;document.body.classList.remove('focus-mode');fullscreenBtn.textContent='⛶'}});
+      document.addEventListener('fullscreenchange',()=>{if(!document.fullscreenElement&&nativeFullscreen){nativeFullscreen=false;document.body.classList.remove('focus-mode');fullscreenBtn.textContent='⛶'}settleFitNotes()});
+      document.addEventListener('webkitfullscreenchange',settleFitNotes);
       document.addEventListener('keydown',e=>{if(e.key==='Escape'&&document.body.classList.contains('focus-mode'))toggleFullscreen()});
+      window.addEventListener('resize',scheduleFitNotes,{passive:true});
+      window.addEventListener('orientationchange',settleFitNotes,{passive:true});
+      if(window.visualViewport)visualViewport.addEventListener('resize',settleFitNotes,{passive:true});
+      if('ResizeObserver'in window)new ResizeObserver(scheduleFitNotes).observe($('sortList'));
+      if('MutationObserver'in window)new MutationObserver(()=>{
+        if($('sortView').classList.contains('active'))settleFitNotes();
+      }).observe($('sortView'),{attributes:true,attributeFilter:['class']});
     })();
   </script>
 </body>
